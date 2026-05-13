@@ -45,8 +45,8 @@ jobs:
       - name: 3. HuggingFace Space로 push
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USER: <id>           # ← 본인 HF username으로 교체
-          HF_SPACE: <repo>        # ← 본인 HF Space 이름으로 교체 (예: calorie-counter)
+          HF_USER: GamJa1028           # ← 본인 HF username으로 교체
+          HF_SPACE: s13-aiweb2026        # ← 본인 HF Space 이름으로 교체 (예: calorie-counter)
         run: |
           set -e
           if [ -z "$HF_TOKEN" ]; then

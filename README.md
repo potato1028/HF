@@ -1,14 +1,10 @@
 ---
-title: {{title}}
-emoji: {{emoji}}
-colorFrom: {{colorFrom}}
-colorTo: {{colorTo}}
-sdk: {{sdk}}
-sdk_version: "{{sdkVersion}}"
-{{#pythonVersion}}
-python_version: "{{pythonVersion}}"
-{{/pythonVersion}}
-app_file: app.py
+title: 프로젝트 이름
+emoji: 🍱
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 7860
 pinned: false
 ---
 
