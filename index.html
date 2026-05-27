@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>AI 유튜브 자막 생성기</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); max-width: 800px; width: 100%; margin-bottom: 20px; }
+        h1 { margin-top: 0; color: #333; text-align: center; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        #pipBtn:hover { background-color: #218838; }
+        #status { margin-top: 15px; font-weight: bold; text-align: center; color: #007bff; }
+        .video-container { position: relative; width: 100%; max-width: 800px; aspect-ratio: 16 / 9; background-color: black; border-radius: 10px; overflow: hidden; display: none; }
+        iframe { width: 100%; height: 100%; border: none; }
+        .subtitle-overlay { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: white; background-color: rgba(0, 0, 0, 0.7); font-size: 24px; font-weight: bold; padding: 10px 20px; border-radius: 10px; text-align: center; width: 80%; pointer-events: none; display: none; }
+        .floating-pip { position: fixed !important; bottom: 30px; right: 30px; width: 450px !important; z-index: 9999; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border-radius: 12px; animation: popIn 0.3s ease-out forwards; }
+        .floating-pip .subtitle-overlay { font-size: 16px; bottom: 15px; width: 90%; padding: 5px 10px; }
+        @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ AI 유튜브 자막 생성기</h1>
+        <div class="input-group">
+            <label>Gemini API Key</label>
+            <input type="password" id="apiKey" placeholder="AI Studio에서 발급받은 API 키를 입력하세요">
+        </div>
+        <div class="input-group">
+            <label>유튜브 영상 URL</label>
+            <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
+        </div>
+        <div class="input-group">
+            <label>번역 테마 (선택사항)</label>
+            <input type="text" id="theme" placeholder="예 : 2D 플랫포머 게임 개발, 리뷰 등">
+        </div>
+        <button id="generateBtn" onclick="generateSubtitles()">자막 생성 및 영상 재생</button>
+        <button id="pipBtn" onclick="togglePiP()" style="display: none; background-color: #28a745; margin-top: 10px;">📺 PIP 모드로 보기 (화면 속 화면)</button>
+        <div id="status"></div>
+    </div>
+
+    <div class="video-container" id="videoWrapper">
+        <div id="player"></div>
+        <div class="subtitle-overlay" id="subtitleText">AI 자막 실행 중...</div>
+    </div>
+
+    <script>
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        let player;
+        let subtitles = [];
+        let subtitleInterval;
+        let pipWindow = null;
+
+        function extractVideoID(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+        function parseSubtitles(text) {
+            const parsed = [];
+            const lines = text.split('\n');
+            const regex = /\[(\d{1,2}):(\d{1,2})\]\s*(.*)/;
+            for (let line of lines) {
+                const match = line.match(regex);
+                if(match) {
+                    const minutes = parseInt(match[1]);
+                    const seconds = parseInt(match[2]);
+                    const content = match[3].trim();
+                    parsed.push({ time: (minutes * 60) + seconds, text: content });
+                }
+            }
+            return parsed;
+        }
+
+        async function generateSubtitles() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const videoUrl = document.getElementById('videoUrl').value.trim();
+            const theme = document.getElementById("theme").value.trim();
+            const statusEl = document.getElementById('status');
+            const btn = document.getElementById('generateBtn');
+
+            if(!apiKey || !videoUrl) {
+                alert("API Key와 유튜브 URL을 모두 입력해주세요!");
+                return;
+            }
+
+            const videoId = extractVideoID(videoUrl);
+            if(!videoId) {
+                alert("유효한 유튜브 URL이 아닙니다");
+                return;
+            }
+
+            btn.disabled = true;
+            statusEl.innerText = "서버에서 오디오를 추출하고 Gemini가 번역 중입니다....";
+            document.getElementById('videoWrapper').style.display = 'none';
+            document.getElementById('pipBtn').style.display = 'none';
+
+            try {
+                // 🌟 클라우드 환경에 맞게 상대 경로로 수정 완료
+                const response = await fetch("/api/get_subtitles", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: videoUrl, api_key: apiKey, theme: theme })
+                });
+
+                if(!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || "서버 에러 발생");
+                }
+
+                const data = await response.json();
+                subtitles = parseSubtitles(data.subtitle_text);
+                if(subtitles.length == 0) {
+                    throw new Error("자막을 추출하였지만 정해진 타임 스탬프 형식을 찾지 못했습니다.");
+                }
+
+                localStorage.setItem('savedApiKey', apiKey);
+                localStorage.setItem('savedVideoUrl', videoUrl);
+                localStorage.setItem('savedTheme', theme);
+                localStorage.setItem('savedSubtitles', JSON.stringify(subtitles));
+
+                statusEl.innerText = "✅ 자막 생성 완료! 영상이 재생됩니다.";
+                document.getElementById('videoWrapper').style.display = 'block';
+                document.getElementById('pipBtn').style.display = 'block';
+                document.getElementById('subtitleText').style.display = 'block';
+                document.getElementById('subtitleText').innerText = '영상 재생 대기 중...';
+
+                if (player) {
+                    player.loadVideoById(videoId);
+                } else {
+                    player = new YT.Player('player', {
+                        height: '100%', width: '100%', videoId: videoId,
+                        playerVars: { 'origin': window.location.origin },
+                        events: { 'onStateChange': onPlayerStateChange }
+                    });
+                }
+            } catch (error) {
+                console.error(error);
+                statusEl.innerText = "❌ 에러: " + error.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data == YT.PlayerState.PLAYING) {
+                subtitleInterval = setInterval(() => {
+                    const currentTime = player.getCurrentTime();
+                    let currentText = "";
+                    for(let i = 0; i < subtitles.length; i++) {
+                        if(subtitles[i].time <= currentTime) {
+                            currentText = subtitles[i].text;
+                        } else {
+                            break;
+                        }
+                    }
+                    if(currentText) document.getElementById('subtitleText').innerText = currentText;
+                }, 100);
+            } else {
+                clearInterval(subtitleInterval);
+            }
+        }
+
+        function togglePiP() {
+            const videoWrapper = document.getElementById('videoWrapper');
+            const pipBtn = document.getElementById('pipBtn');
+            videoWrapper.classList.toggle('floating-pip');
+            if (videoWrapper.classList.contains('floating-pip')) {
+                pipBtn.innerText = "📺 원래 화면으로 복귀";
+                pipBtn.style.backgroundColor = "#dc3545";
+            } else {
+                pipBtn.innerText = "📺 미니 플레이어로 보기 (화면 우측 하단 고정)";
+                pipBtn.style.backgroundColor = "#28a745";
+                videoWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function onYouTubeIframeAPIReady() {
+            const savedVideoUrl = localStorage.getItem('savedVideoUrl');
+            const savedSubtitles = localStorage.getItem('savedSubtitles');
+            if (savedVideoUrl && savedSubtitles) {
+                const videoId = extractVideoID(savedVideoUrl);
+                player = new YT.Player('player', {
+                    height: '100%', width: '100%', videoId: videoId,
+                    playerVars: { 'origin': window.location.origin },
+                    events: { 'onStateChange': onPlayerStateChange }
+                });
+            }
+        }
+    </script>
+</body>
+</html>
