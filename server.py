@@ -65,21 +65,29 @@ def translate_news(req: NewsRequest):
         print("Llama-3-8B 모델 분석 요청 중...")
         
         client = InferenceClient(token=actual_token)
-        model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
+        model_id = "Qwen/Qwen2.5-72B-Instruct"
 
-        tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 명확하고 전문적인 뉴스 앵커 스타일"
+        tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 신뢰감 있는 전문 뉴스 앵커 스타일"
 
-        # Llama-3 맞춤형 역할 부여 (System Prompt)
+        # 개선된 System Prompt
         system_prompt = f"""
-        너는 최고의 AI 해외 뉴스 번역가이자 요약 에디터야.
-        반드시 모든 대답은 한국어로만 작성해야 해.
+        너는 20년 경력의 수석 해외 뉴스 전문 번역가이자 편집장이야.
+        원문의 의미를 정확하게 파악하고, 한국어 원어민이 읽었을 때 전혀 어색함이 없는 매끄러운 기사를 작성하는 것이 목표야.
+
+        [번역 품질 가이드라인]
+        1. 단순 직역을 엄격히 금지하며, 문맥과 뉘앙스를 살려 한국어에 맞는 자연스러운 문장 구조(의역)로 재작성해.
+        2. 사람 이름, 회사명 등 중요한 고유명사는 첫 등장 시 한글 표기와 함께 괄호 안에 영문을 병기해 (예: 일론 머스크(Elon Musk)).
+        3. 문장은 간결하고 명확하게 끝맺음을 처리해.
+        4. {tone_instruction}
 
         [출력 규칙]
-        1. 반드시 아래 두 가지 섹션으로 나누어 한국어로 출력해.
-           섹션 1: "📌 핵심 3줄 요약" (기사의 가장 중요한 내용을 3개의 불릿 포인트로 요약)
-           섹션 2: "📰 전체 한글 번역" (원문의 흐름을 살려 전체 내용을 명확하게 번역)
-        2. {tone_instruction}
-        3. 각 섹션의 제목은 굵은 글씨(**)로 표시해.
+        반드시 아래 두 가지 섹션으로만 나누어 한국어로 출력해. 각 섹션 제목은 굵은 글씨(**)로 표시해.
+        
+        **📌 핵심 3줄 요약**
+        (기사의 가장 핵심적인 인사이트를 3개의 불릿 포인트로 간결하게 요약)
+
+        **📰 전체 한글 번역**
+        (위 번역 가이드라인을 철저히 준수한 기사 전문 번역)
         """
 
         user_prompt = f"다음 해외 뉴스 기사 원문을 분석하고 번역해 줘:\n\n{article_text[:6000]}"
