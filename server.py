@@ -61,24 +61,27 @@ def translate_news(req: NewsRequest):
         raise HTTPException(status_code=400, detail=f"뉴스 기사 가져오기 실패 : {e}")
 
     # 2. Llama-3-8B-Instruct 모델 호출
+    # 2. 고성능 다국어 모델 호출 및 프롬프트 최적화
     try:
-        print("Llama-3-8B 모델 분석 요청 중...")
+        print("AI 모델 분석 요청 중...")
         
         client = InferenceClient(token=actual_token)
-        model_id = "Qwen/Qwen2.5-72B-Instruct"
+        # 한국어 및 의역 능력이 뛰어난 Qwen2.5 모델로 교체 (무료 API 지원)
+        model_id = "Qwen/Qwen2.5-7B-Instruct"
 
         tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 신뢰감 있는 전문 뉴스 앵커 스타일"
 
-        # 개선된 System Prompt
+        # 자연스러운 번역을 강제하는 고급 시스템 프롬프트
         system_prompt = f"""
         너는 20년 경력의 수석 해외 뉴스 전문 번역가이자 편집장이야.
         원문의 의미를 정확하게 파악하고, 한국어 원어민이 읽었을 때 전혀 어색함이 없는 매끄러운 기사를 작성하는 것이 목표야.
 
         [번역 품질 가이드라인]
-        1. 단순 직역을 엄격히 금지하며, 문맥과 뉘앙스를 살려 한국어에 맞는 자연스러운 문장 구조(의역)로 재작성해.
-        2. 사람 이름, 회사명 등 중요한 고유명사는 첫 등장 시 한글 표기와 함께 괄호 안에 영문을 병기해 (예: 일론 머스크(Elon Musk)).
-        3. 문장은 간결하고 명확하게 끝맺음을 처리해.
-        4. {tone_instruction}
+        1. 단순 직역을 엄격히 금지하며, 문맥과 뉘앙스를 살려 한국어 표현에 맞는 자연스러운 문장 구조(의역)로 재작성해.
+        2. 관용구나 정치/사회적 표현은 기계적으로 바꾸지 말고, 한국 언론에서 쓰는 저널리즘 어투로 다듬어. (예: 'bitter election' -> '치열한 선거전' 또는 '진흙탕 싸움')
+        3. 사람 이름, 회사명 등 중요한 고유명사는 첫 등장 시 한글 표기와 함께 괄호 안에 영문을 병기해. (예: 일론 머스크(Elon Musk))
+        4. 문장은 간결하고 명확하게 끝맺음을 처리해 (~했다, ~인다 등).
+        5. {tone_instruction}
 
         [출력 규칙]
         반드시 아래 두 가지 섹션으로만 나누어 한국어로 출력해. 각 섹션 제목은 굵은 글씨(**)로 표시해.
