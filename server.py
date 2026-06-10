@@ -1,12 +1,13 @@
 import os
-import time
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import yt_dlp
-import google.generativeai as genai
-import uuid
+import requests
+from bs4 import BeautifulSoup
+
+# 🌟 Hugging Face Inference API 클라이언트 임포트
+from huggingface_hub import InferenceClient
 
 app = FastAPI()
 
@@ -18,92 +19,96 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SubtitleRequest(BaseModel):
+class NewsRequest(BaseModel):
     url: str
-    api_key: str
-    theme: str = ""
+    api_key: str = ""
+    tone: str = ""
 
-m4a_folder = "Project/m4aFolder/"
-os.makedirs(m4a_folder, exist_ok=True)
-
-# 🌟 루트 접속 시 index.html 렌더링
 @app.get("/")
 def serve_frontend():
     return FileResponse("index.html")
 
-@app.post("/api/get_subtitles")
-def get_subtitles(req: SubtitleRequest): 
-    print(f"\n{req.url} 오디오 다운로드 중...")
-
-    temp_filename = f"audio_{uuid.uuid4().hex}.m4a"
-    current_file_path = os.path.join(m4a_folder, temp_filename)
-    ydl_opts = {
-        'format': 'bestaudio[ext=m4a]',
-        'outtmpl': current_file_path,
-        'quiet': True,
-        'noplaylist': True
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.cache.remove()
-            ydl.extract_info(req.url, download=True)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"다운로드 중 에러 발생 : {e}")
-
-    try:
-        print("Gemini에게 파일 보내는 중...")
-        genai.configure(api_key=req.api_key)
-
-        audio_file = genai.upload_file(path=current_file_path)
-
-        while audio_file.state.name == "PROCESSING":
-            print('.', end='', flush=True)
-            time.sleep(5)
-            audio_file = genai.get_file(audio_file.name)
-        
-        if audio_file.state.name != "ACTIVE":
-            raise Exception(f"파일 처리 실패 : {audio_file.state.name}")
+@app.post("/api/translate_news")
+def translate_news(req: NewsRequest): 
+    # 🌟 공용 API 키 처리 로직 (HF_TOKEN 환경변수 사용)
+    public_hf_token = os.getenv("HF_TOKEN")
+    use_public_key = False
     
-        print("\n번역 및 요약 시작...")
+    if not req.api_key.strip():
+        if not public_hf_token:
+            raise HTTPException(status_code=400, detail="서버에 공용 HF_TOKEN이 설정되지 않았습니다. 개인 토큼을 입력해주세요.")
+        actual_token = public_hf_token
+        use_public_key = True
+    else:
+        actual_token = req.api_key.strip()
 
-        if req.theme.strip():
-            intro_prompt = f"이 영상은 {req.theme}에 대한 설명이야. 내용을 한국어로 번역해줘"
-        else:
-            intro_prompt = "이 영상의 내용을 한국어로 번역해서 설명해줘"
+    print(f"\n{req.url} 뉴스 기사 크롤링 시작...")
 
-        rules_prompt = """
-        [반드시 지켜야 할 출력 규칙]
-        1. 시간 표시 필수 : 문장 앞에 영상의 위치를 반드시 [MM:SS] (분:초) 형식으로 적어줘.
-            - 주의 : '초'단위는 절대 60을 넘을 수 없어.
-            - 프레임이나 밀리초 단위는 표시하지 마.
-            - 예시 : [00:30] 영상번역내용 / [13:10] 영상번역내용.
+    # 1. 뉴스 웹페이지 본문 크롤링
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(req.url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        paragraphs = soup.find_all('p')
+        article_text = "\n".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
+        
+        if not article_text:
+            raise Exception("기사 본문을 추출할 수 없습니다. 다른 뉴스 사이트 링크로 시도해 주세요.")
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"뉴스 기사 가져오기 실패 : {e}")
 
-        2. 평문(Plain Text)만 사용 :
-            - **강조** 처리를 포함한 모든 마크다운(Markdown) 문법을 절대 사용하지 마.
-            - 제목(#), 리스트(-), 볼드체(**) 없이 오직 순수한 텍스트로만 출력해.
+    # 2. Llama-3-8B-Instruct 모델 호출
+    try:
+        print("Llama-3-8B 모델 분석 요청 중...")
+        
+        client = InferenceClient(token=actual_token)
+        model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
 
-        3. 내용 : 중요한 코드 개념을 포함하여 상세하게 설명하되, 위 두 가지 규칙을 엄격하게 지켜줘.
+        tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 명확하고 전문적인 뉴스 앵커 스타일"
+
+        # Llama-3 맞춤형 역할 부여 (System Prompt)
+        system_prompt = f"""
+        너는 최고의 AI 해외 뉴스 번역가이자 요약 에디터야.
+        반드시 모든 대답은 한국어로만 작성해야 해.
+
+        [출력 규칙]
+        1. 반드시 아래 두 가지 섹션으로 나누어 한국어로 출력해.
+           섹션 1: "📌 핵심 3줄 요약" (기사의 가장 중요한 내용을 3개의 불릿 포인트로 요약)
+           섹션 2: "📰 전체 한글 번역" (원문의 흐름을 살려 전체 내용을 명확하게 번역)
+        2. {tone_instruction}
+        3. 각 섹션의 제목은 굵은 글씨(**)로 표시해.
         """
 
-        final_prompt = f"{intro_prompt}\n\n{rules_prompt}"
+        user_prompt = f"다음 해외 뉴스 기사 원문을 분석하고 번역해 줘:\n\n{article_text[:6000]}"
 
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content([audio_file, final_prompt])
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
-        if current_file_path and os.path.exists(current_file_path):
-            os.remove(current_file_path)
-            print("임시 오디오 파일 삭제 완료.")
+        # API 요청 보내기
+        response = client.chat_completion(
+            model=model_id,
+            messages=messages,
+            max_tokens=2048,
+            temperature=0.2
+        )
 
-        try:
-            genai.delete_file(audio_file.name)
-        except:
-            pass
+        result_text = response.choices[0].message.content
+        print("AI 요약 및 번역 완료!")
+        
+        return {"result_text": result_text}
 
-        print("자막 생성 완료!")
-        return {"subtitle_text": response.text}
-    
     except Exception as e:
-        if current_file_path and os.path.exists(current_file_path):
-            os.remove(current_file_path)
-        raise HTTPException(status_code=500, detail=f"Gemini 처리 중 에러 발생 : {e}")
+        error_msg = str(e).lower()
+        # 429나 Rate limit 에러 발생 시 공용 한도 초과 메세지 전송
+        if "rate limit" in error_msg or "too many requests" in error_msg or "429" in error_msg:
+            if use_public_key:
+                raise HTTPException(status_code=429, detail="PUBLIC_API_EXHAUSTED")
+            else:
+                raise HTTPException(status_code=429, detail="입력하신 개인 HF 토큰의 호출 한도가 초과되었습니다.")
+                
+        raise HTTPException(status_code=500, detail=f"Llama-3 처리 중 에러 발생 : {e}")

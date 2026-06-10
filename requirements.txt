@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-yt-dlp
-google-generativeai
 pydantic
+requests
+beautifulsoup4
+huggingface_hub
