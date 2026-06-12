@@ -3,102 +3,182 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 해외 뉴스 번역 & 요약기 (Llama-3)</title>
+    <title>AI 프리미엄 해외 뉴스 번역기</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; color: #333; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); max-width: 800px; width: 100%; margin-bottom: 20px; }
-        h1 { margin-top: 0; color: #0ea5e9; text-align: center; }
-        .banner { background-color: #d1fae5; color: #065f46; padding: 12px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold; font-size: 0.95rem; }
-        .input-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
-        input[type="text"], input[type="password"] { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; font-size: 1rem; }
-        button { width: 100%; padding: 14px; background-color: #0ea5e9; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
-        button:hover { background-color: #0284c7; }
-        button:disabled { background-color: #94a3b8; cursor: not-allowed; }
-        #status { margin-top: 15px; font-weight: bold; text-align: center; color: #0ea5e9; }
+        :root { --bg-color: #f8fafc; --container-bg: white; --text-color: #333; --border-color: #cbd5e1; --primary: #0ea5e9; --btn-hover: #0284c7; }
+        body.dark-mode { --bg-color: #1e293b; --container-bg: #0f172a; --text-color: #f1f5f9; --border-color: #334155; }
         
-        .result-container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); max-width: 800px; width: 100%; display: none; line-height: 1.8; font-size: 1.05rem; }
-        .result-container h2 { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-top: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; transition: background-color 0.3s; }
+        .container, .result-container { background: var(--container-bg); padding: 30px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); max-width: 800px; width: 100%; margin-bottom: 20px; transition: background-color 0.3s; }
+        
+        h1 { margin-top: 0; color: var(--primary); text-align: center; }
+        .header-controls { display: flex; justify-content: flex-end; width: 100%; max-width: 860px; margin-bottom: 10px; }
+        .toggle-btn { background: none; border: 2px solid var(--primary); color: var(--text-color); border-radius: 20px; padding: 5px 15px; cursor: pointer; font-weight: bold; }
+        
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: 6px; box-sizing: border-box; font-size: 1rem; background-color: var(--container-bg); color: var(--text-color); }
+        
+        .main-btn { width: 100%; padding: 14px; background-color: var(--primary); color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
+        .main-btn:hover { background-color: var(--btn-hover); }
+        .main-btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
+        
+        #status { margin-top: 15px; font-weight: bold; text-align: center; color: var(--primary); }
+        
+        .result-container { display: none; line-height: 1.8; font-size: 1.05rem; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px; }
+        .result-header h2 { margin: 0; }
+        .action-btns button { margin-left: 5px; padding: 6px 12px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #333; font-weight: bold; }
+        .action-btns button:hover { background: #cbd5e1; }
+        
+        .keywords { margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .keyword-tag { background-color: #dbeafe; color: #1e40af; padding: 5px 10px; border-radius: 15px; font-size: 0.85rem; font-weight: bold; }
         .result-text { white-space: pre-wrap; word-wrap: break-word; }
+
+        #scrapbook { margin-top: 30px; border-top: 2px dashed var(--border-color); padding-top: 20px; display: none; }
+        .scrap-item { background: var(--bg-color); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 10px; font-size: 0.9rem; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📰 AI 해외 뉴스 번역 & 요약기 (Llama-3)</h1>
-        
-        <div id="apiStatusBanner" class="banner">
-            🟢 현재 공용 API를 제공 중입니다! (토큰 없이 바로 사용 가능)
-        </div>
+    <div class="header-controls">
+        <button class="toggle-btn" onclick="toggleDarkMode()">🌙 다크 모드</button>
+    </div>
 
-        <div class="input-group">
-            <label>Hugging Face Token (선택 사항)</label>
-            <input type="password" id="apiKey" placeholder="공용 토큰 한도 초과 시 본인의 HF 토큰(Write)을 입력하세요">
-        </div>
+    <div class="container">
+        <h1>📰 AI 프리미엄 해외 뉴스 번역기</h1>
         <div class="input-group">
             <label>해외 뉴스 URL</label>
-            <input type="text" id="newsUrl" placeholder="https://www.nytimes.com/... 또는 해외 기사 주소">
+            <input type="text" id="newsUrl" placeholder="해외 기사 주소 입력">
         </div>
         <div class="input-group">
             <label>번역 타겟/어조 (선택 사항)</label>
-            <input type="text" id="tone" placeholder="예: 10대 수준에 맞춰 쉽게, 초등학생 버전, 구어체 등">
+            <input type="text" id="tone" placeholder="예: 10대 수준에 맞춰 쉽게, 초등학생 버전 등">
         </div>
-        <button id="generateBtn" onclick="translateNews()">뉴스 요약 및 번역하기</button>
+        <button id="generateBtn" class="main-btn" onclick="translateNews()">뉴스 요약 및 번역 시작</button>
         <div id="status"></div>
     </div>
 
-    <div class="result-container" id="resultWrapper">
-        <h2>✨ AI 분석 결과</h2>
+    <div class="result-container" id="captureArea">
+        <div class="result-header">
+            <h2>✨ AI 분석 결과</h2>
+            <div class="action-btns" data-html2canvas-ignore>
+                <button onclick="speakText()">🎧 읽기</button>
+                <button onclick="saveAsImage()">💾 이미지 저장</button>
+                <button onclick="scrapResult()">📌 스크랩</button>
+            </div>
+        </div>
+        <div class="keywords" id="keywordContainer"></div>
         <div class="result-text" id="resultText">결과가 여기에 표시됩니다.</div>
     </div>
 
+    <div class="container" id="scrapbook">
+        <h3>📖 내 스크랩북 (브라우저 저장)</h3>
+        <div id="scrapList"></div>
+    </div>
+
     <script>
+        // --- 부가 기능 1: 다크 모드 ---
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+        }
+
+        // --- 부가 기능 2: TTS (음성 읽어주기) ---
+        let isSpeaking = false;
+        function speakText() {
+            if (isSpeaking) { window.speechSynthesis.cancel(); isSpeaking = false; return; }
+            const text = document.getElementById('resultText').innerText;
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ko-KR';
+            utterance.rate = 1.1; // 읽는 속도 조절
+            window.speechSynthesis.speak(utterance);
+            isSpeaking = true;
+            utterance.onend = () => { isSpeaking = false; };
+        }
+
+        // --- 부가 기능 3: 이미지로 캡처 (html2canvas) ---
+        function saveAsImage() {
+            const element = document.getElementById('captureArea');
+            html2canvas(element, { backgroundColor: document.body.classList.contains('dark-mode') ? '#0f172a' : '#ffffff' }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = '뉴스요약.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            });
+        }
+
+        // --- 부가 기능 4: 로컬 스크랩 저장 (localStorage) ---
+        function scrapResult() {
+            const text = document.getElementById('resultText').innerHTML;
+            if (!text) return;
+            const scraps = JSON.parse(localStorage.getItem('myScraps') || '[]');
+            const newItem = { date: new Date().toLocaleString(), content: text.substring(0, 150) + "..." };
+            scraps.unshift(newItem);
+            localStorage.setItem('myScraps', JSON.stringify(scraps));
+            alert("스크랩북에 저장되었습니다!");
+            renderScrapbook();
+        }
+
+        function renderScrapbook() {
+            const scraps = JSON.parse(localStorage.getItem('myScraps') || '[]');
+            const scrapBox = document.getElementById('scrapbook');
+            const scrapList = document.getElementById('scrapList');
+            if (scraps.length > 0) {
+                scrapBox.style.display = 'block';
+                scrapList.innerHTML = scraps.map(s => `<div class="scrap-item"><strong>${s.date}</strong><br>${s.content}</div>`).join('');
+            }
+        }
+
+        // 페이지 로드 시 스크랩북 렌더링
+        window.onload = renderScrapbook;
+
+        // --- 메인 기능: 서버 통신 (API) ---
         async function translateNews() {
-            const apiKey = document.getElementById('apiKey').value.trim();
             const newsUrl = document.getElementById('newsUrl').value.trim();
             const tone = document.getElementById("tone").value.trim();
             const statusEl = document.getElementById('status');
             const btn = document.getElementById('generateBtn');
-            const banner = document.getElementById('apiStatusBanner');
-            const resultWrapper = document.getElementById('resultWrapper');
+            const resultWrapper = document.getElementById('captureArea');
             const resultTextEl = document.getElementById('resultText');
+            const keywordContainer = document.getElementById('keywordContainer');
 
-            if(!newsUrl) {
-                alert("번역할 뉴스 URL을 입력해주세요!");
-                return;
-            }
+            if(!newsUrl) { alert("번역할 뉴스 URL을 입력해주세요!"); return; }
 
             btn.disabled = true;
-            statusEl.innerText = "서버에서 뉴스를 가져와 분석 중입니다... ⏳";
+            statusEl.innerText = "서버에서 AI가 최적의 분석을 진행 중입니다... ⏳";
             resultWrapper.style.display = 'none';
+            keywordContainer.innerHTML = '';
 
             try {
                 const response = await fetch("/api/translate_news", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ url: newsUrl, api_key: apiKey, tone: tone })
+                    body: JSON.stringify({ url: newsUrl, tone: tone })
                 });
 
                 if(!response.ok) {
                     const errData = await response.json();
-                    
-                    if (errData.detail === "PUBLIC_API_EXHAUSTED") {
-                        banner.style.backgroundColor = '#fee2e2';
-                        banner.style.color = '#991b1b';
-                        banner.innerText = "🔴 공용 토큰 하루 한도가 초과되었습니다. 개인 HF 토큰을 입력해주세요.";
-                        document.getElementById('apiKey').focus();
-                        throw new Error("공용 API 한도 초과");
-                    }
                     throw new Error(errData.detail || "서버 에러 발생");
                 }
 
                 const data = await response.json();
                 
-                // 마크다운 형태의 **텍스트**를 HTML bold인 <strong> 태그로 변환
+                // 마크다운 변환
                 let formattedText = data.result_text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                
                 resultTextEl.innerHTML = formattedText;
+                
+                // 부가 기능 5: 핵심 단어 태그 생성
+                if(data.keywords && data.keywords.length > 0) {
+                    data.keywords.forEach(kw => {
+                        const span = document.createElement('span');
+                        span.className = 'keyword-tag';
+                        span.innerText = '#' + kw;
+                        keywordContainer.appendChild(span);
+                    });
+                }
+
                 resultWrapper.style.display = 'block';
-                statusEl.innerText = "✅ 분석 및 번역이 완료되었습니다!";
+                statusEl.innerText = "✅ 완벽하게 번역 및 요약되었습니다!";
                 
             } catch (error) {
                 console.error(error);

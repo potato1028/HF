@@ -5,10 +5,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import requests
 from bs4 import BeautifulSoup
+import re
+from collections import Counter
 
-# 🌟 Gemini SDK 임포트
+# 3사 AI SDK 임포트
+from openai import OpenAI
 from google import genai
-from google.genai import errors
+from huggingface_hub import InferenceClient
 
 app = FastAPI()
 
@@ -22,8 +25,13 @@ app.add_middleware(
 
 class NewsRequest(BaseModel):
     url: str
-    api_key: str = ""
     tone: str = ""
+
+# 간단한 명사 형태의 키워드 추출 함수 (정규식 활용)
+def extract_keywords(text: str, num: int = 5):
+    words = re.findall(r'\b[가-힣]{2,}\b', text)
+    counter = Counter(words)
+    return [word for word, count in counter.most_common(num)]
 
 @app.get("/")
 def serve_frontend():
@@ -31,21 +39,7 @@ def serve_frontend():
 
 @app.post("/api/translate_news")
 def translate_news(req: NewsRequest): 
-    # 1. API 키 결정 로직 (사용자 키 vs 공용 키)
-    server_public_gemini_key = os.getenv("GEMINI_API_KEY")
-    is_using_public_key = False
-    
-    if req.api_key.strip():
-        final_api_key = req.api_key.strip()
-    else:
-        if not server_public_gemini_key:
-            raise HTTPException(status_code=400, detail="서버 공용 토큰이 설정되지 않았습니다. 개인 Gemini API 키를 입력해 주세요.")
-        final_api_key = server_public_gemini_key
-        is_using_public_key = True
-
-    print(f"\n{req.url} 뉴스 기사 크롤링 시작...")
-
-    # 2. 뉴스 웹페이지 본문 크롤링
+    # 1. 뉴스 웹페이지 본문 크롤링
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(req.url, headers=headers, timeout=10)
@@ -57,60 +51,84 @@ def translate_news(req: NewsRequest):
         
         if not article_text:
             raise Exception("기사 본문을 추출할 수 없습니다. 다른 링크로 시도해 주세요.")
-            
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"뉴스 기사 가져오기 실패 : {e}")
 
-    # 3. Gemini API 호출
+    # 2. 공통 프롬프트 세팅
+    tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 신뢰감 있는 전문 뉴스 앵커 스타일"
+    system_instruction = f"""
+    너는 20년 경력의 수석 해외 뉴스 전문 번역가야.
+    1. 직역 금지, 문맥을 살려 자연스러운 한국어 의역.
+    2. 고유명사 첫 등장 시 한글 표기와 함께 괄호 안에 영문 병기.
+    3. {tone_instruction}
+    
+    [출력 규칙]
+    반드시 아래 두 섹션으로만 나누어 한국어로 출력해. 각 섹션 제목은 굵은 글씨(**)로 표시.
+    **📌 핵심 3줄 요약**
+    **📰 전체 한글 번역**
+    """
+    user_prompt = f"다음 해외 뉴스 기사 원문을 분석하고 번역해 줘:\n\n{article_text[:6000]}"
+    
+    result_text = ""
+
+    # 3. 3중 폭포수(Waterfall) AI 호출 로직
+    # 1순위: OpenAI (GPT-4o-mini)
     try:
-        print("Gemini 모델 분석 요청 중...")
-        client = genai.Client(api_key=final_api_key)
-
-        tone_instruction = f"번역 어조/타겟: {req.tone}" if req.tone.strip() else "번역 어조: 신뢰감 있는 전문 뉴스 앵커 스타일"
-
-        system_instruction = f"""
-        너는 20년 경력의 수석 해외 뉴스 전문 번역가이자 편집장이야.
-        원문의 의미를 정확하게 파악하고, 한국어 원어민이 읽었을 때 전혀 어색함이 없는 매끄러운 기사를 작성해.
-
-        [번역 품질 가이드라인]
-        1. 직역을 엄격히 금지하며, 문맥과 뉘앙스를 살려 한국어 표현에 맞는 자연스러운 문장 구조(의역)로 재작성해.
-        2. 관용구나 정치/사회적 표현은 기계적으로 바꾸지 말고, 한국 언론에서 쓰는 저널리즘 어투로 다듬어.
-        3. 사람 이름, 회사명 등 중요한 고유명사는 첫 등장 시 한글 표기와 함께 괄호 안에 영문을 병기해. (예: 일론 머스크(Elon Musk))
-        4. 문장은 간결하고 명확하게 끝맺음을 처리해.
-        5. {tone_instruction}
-
-        [출력 규칙]
-        반드시 아래 두 가지 섹션으로만 나누어 한국어로 출력해. 각 섹션 제목은 굵은 글씨(**)로 표시해.
+        print("1순위: OpenAI 호출 시도...")
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if not openai_key: raise Exception("OpenAI Key Not Found")
         
-        **📌 핵심 3줄 요약**
-        (기사의 가장 핵심적인 인사이트를 3개의 불릿 포인트로 간결하게 요약)
-
-        **📰 전체 한글 번역**
-        (위 번역 가이드라인을 철저히 준수한 기사 전문 번역)
-        """
-
-        user_prompt = f"다음 해외 뉴스 기사 원문을 분석하고 번역해 줘:\n\n{article_text[:6000]}"
-
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=user_prompt,
-            config={
-                "system_instruction": system_instruction,
-                "temperature": 0.2,
-            }
+        client = OpenAI(api_key=openai_key)
+        res = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2, max_tokens=2048
         )
+        result_text = res.choices[0].message.content
+        print("OpenAI 번역 성공!")
 
-        print("Gemini 요약 및 번역 완료!")
-        return {"result_text": response.text}
+    except Exception as e1:
+        print(f"OpenAI 실패({e1}), 2순위: Gemini 호출 시도...")
+        # 2순위: Gemini (Gemini-2.5-Flash)
+        try:
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if not gemini_key: raise Exception("Gemini Key Not Found")
+            
+            client = genai.Client(api_key=gemini_key)
+            res = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=user_prompt,
+                config={"system_instruction": system_instruction, "temperature": 0.2}
+            )
+            result_text = res.text
+            print("Gemini 번역 성공!")
 
-    except errors.APIError as e:
-        error_msg = str(e).lower()
-        if "quota" in error_msg or "429" in error_msg:
-            if is_using_public_key:
-                raise HTTPException(status_code=429, detail="PUBLIC_API_EXHAUSTED")
-            else:
-                raise HTTPException(status_code=429, detail="입력하신 개인 Gemini API 키의 사용 한도가 초과되었습니다.")
-        raise HTTPException(status_code=400, detail=f"Gemini API 오류: {e}")
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"서버 처리 중 에러 발생: {e}")
+        except Exception as e2:
+            print(f"Gemini 실패({e2}), 3순위: HuggingFace Llama 호출 시도...")
+            # 3순위: Llama (HuggingFace API)
+            try:
+                hf_token = os.getenv("HF_TOKEN")
+                if not hf_token: raise Exception("HF Token Not Found")
+                
+                client = InferenceClient(token=hf_token)
+                messages = [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt}
+                ]
+                res = client.chat_completion(
+                    model="meta-llama/Meta-Llama-3.1-8B-Instruct",
+                    messages=messages, temperature=0.2, max_tokens=2048
+                )
+                result_text = res.choices[0].message.content
+                print("Llama 번역 성공!")
+
+            except Exception as e3:
+                print(f"Llama 실패({e3})")
+                raise HTTPException(status_code=500, detail="현재 모든 AI 서버가 혼잡하여 번역을 수행할 수 없습니다. 잠시 후 다시 시도해 주세요.")
+
+    # 4. 분석된 텍스트에서 키워드 추출 후 프론트엔드로 전달
+    keywords = extract_keywords(result_text, 5)
+    return {"result_text": result_text, "keywords": keywords}
